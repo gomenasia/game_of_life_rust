@@ -1,0 +1,7 @@
+[package]
+name = "game_of_life_rust"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ggez = "0.10.0"
