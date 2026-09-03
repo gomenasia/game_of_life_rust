@@ -1,4 +1,4 @@
-use std::{collections::btree_map::Range, process::id};
+use std::{collections::btree_map::Range, print, process::id, vec};
 
 // First we'll import the crates we need for our game;
 // in this case that is just `ggez` and `oorandom` (and `getrandom`
@@ -23,9 +23,9 @@ const SCREEN_SIZE: (f32, f32) = (
     GRID_SIZE.1 as f32 * PIXEL_SIZE.1 as f32 * MARGIN,
 );
 
-const DESIRED_FPS: u32 = 8;
+const DESIRED_FPS: u32 = 2;
 
-const STRARTING_AWAKE_NUMBER: u16 = 25;
+const STRARTING_AWAKE_NUMBER: u16 = 700;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 struct GridPosition {
@@ -39,18 +39,6 @@ impl GridPosition {
     pub fn new(x: f32, y: f32) -> Self {
         GridPosition { x, y}
     }
-
-    /// As well as a helper function that will give us a random `GridPosition` from
-    /// `(0, 0)` to `(max_x, max_y)`
-    pub fn random(rng: &mut Rand32, max_x: f32, max_y: f32) -> Self {
-        // We can use `.into()` to convert from `(f32, f32)` to a `GridPosition` since
-        // we implement `From<(f32, f32)>` for `GridPosition` below.
-        (
-            rng.rand_range(0..(max_x as u32)) as f32,
-            rng.rand_range(0..(max_y as u32)) as f32,
-        )
-            .into()
-    }
 }
 
 /// We implement the `From` trait, which in this case allows us to convert easily between
@@ -60,23 +48,21 @@ impl GridPosition {
 impl From<GridPosition> for graphics::Rect {
     fn from(pos: GridPosition) -> Self {
         graphics::Rect::new_i32(
-            pos.x as i32 * PIXEL_SIZE.0 as i32,
-            pos.y as i32 * PIXEL_SIZE.1 as i32,
+            pos.x as i32,
+            pos.y as i32,
             PIXEL_SIZE.0 as i32,
             PIXEL_SIZE.1 as i32,
         )
     }
 }
 
-/// And here we implement `From` again to allow us to easily convert between
-/// `(i16, i16)` and a `GridPosition`.
-impl From<(f32, f32)> for GridPosition {
-    fn from(pos: (f32, f32)) -> Self {
-        GridPosition { x: pos.0, y: pos.1}
+impl From<(u16, u16)> for GridPosition {
+    fn from(pos: (u16, u16)) -> Self {
+        GridPosition { x: pos.0 as f32 * PIXEL_SIZE.0 as f32 * MARGIN, y: pos.1 as f32 * PIXEL_SIZE.1 as f32 * MARGIN}
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 struct Cell {
     position : GridPosition,
     awake : bool,
@@ -98,6 +84,7 @@ impl Cell {
 }
 
 //now we create the grid that contain all of the grid pos
+#[derive (Debug)]
 struct Grid{
     vec_vec_cell_grid: Vec<Vec<Cell>>,
 }
@@ -112,9 +99,7 @@ impl Grid{
             for y in 0..col_y{
                 current_row.push(
                     Cell::new(
-                        GridPosition::new(
-                            x as f32 * PIXEL_SIZE.0 as f32 * MARGIN, 
-                            y as f32 * PIXEL_SIZE.1 as f32 * MARGIN), 
+                        (x, y).into(), 
                         false)
                     );
             }
@@ -195,7 +180,7 @@ impl GameState {
 
         let background_mesh: Mesh = grid_mesh_builder(ctx, 
                                             grid.vec_vec_cell_grid.concat(), 
-                                            graphics::Color::BLACK);
+                                            graphics::Color::from_rgb(20, 20, 20));
 
 
         // population initiale aleatoire de cellule eveiller
@@ -225,21 +210,28 @@ impl event::EventHandler for GameState {
         while ctx.time.check_update_time(DESIRED_FPS) {
             if !self.game_paused {
                 // we first loop throught the entire grid to update the cells
-                let mut idx_x: u16= 0;
-                for row in &self.grid.vec_vec_cell_grid{
-                    let mut idx_y: u16= 0;
-                    for cell in row{
-                        if cell.update(self.grid.awake_neighbour(idx_x.clone(), idx_y.clone())) {
-                            if !self.vec_active_cells.contains(cell){
-                                self.vec_active_cells.push(*cell);
-                            }
-                            idx_y +=1;
-                        }
-                    idx_x += 1
+                let mut neighbour_counts: vec::Vec<Vec<u8>> = Vec::new();
+                for x in 0..self.grid.vec_vec_cell_grid.len(){
+                    let mut row_count = Vec::new();
+                    for y in 0..self.grid.vec_vec_cell_grid[x].len(){
+                        row_count.push(self.grid.awake_neighbour(x as u16, y as u16));
+                    }
+                    neighbour_counts.push(row_count);
+                }
+
+                for (x, row) in self.grid.vec_vec_cell_grid.iter_mut().enumerate(){
+                    for (y, cell) in row.iter_mut().enumerate(){
+                        cell.update(neighbour_counts[x][y]);
                     }
                 }
+
                 //then we clear the active cell vec
-                self.vec_active_cells.retain(|cell| cell.awake);
+                self.vec_active_cells = self.grid.vec_vec_cell_grid
+                    .iter()
+                    .flatten()
+                    .filter(|cell| cell.awake)
+                    .copied()
+                    .collect();
             }
         }
         Ok(())
@@ -249,8 +241,8 @@ impl event::EventHandler for GameState {
         let mut canvas = graphics::Canvas::from_frame(ctx, graphics::Color::BLACK);
 
         canvas.draw(&self.background_mesh, graphics::DrawParam::default());
-        canvas.draw(&grid_mesh_builder(ctx, self.vec_active_cells.clone(), graphics::Color::GREEN), 
-        graphics::DrawParam::default());
+        let active_mesh = grid_mesh_builder(ctx, self.vec_active_cells.clone(), graphics::Color::GREEN);
+        canvas.draw(&active_mesh, graphics::DrawParam::default());
 
         canvas.finish(ctx)?;
         Ok(())
@@ -275,4 +267,35 @@ fn main() -> GameResult {
 
     let state = GameState::new(&mut ctx);
     event::run(ctx, events_loop, state)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::print;
+
+use super::*;
+
+    #[test]
+    fn grid_has_correct_dimensions() {
+        let grid = Grid::new(10, 5);
+        assert_eq!(grid.vec_vec_cell_grid.len(), 10);
+        assert_eq!(grid.vec_vec_cell_grid[0].len(), 5);
+    }
+
+    #[test]
+    fn awake_neighbour_counts_correctly() {
+        let mut grid = Grid::new(3, 3);
+        grid.get_mut(0, 0).unwrap().awake();
+        grid.get_mut(1, 0).unwrap().awake();
+        assert_eq!(grid.awake_neighbour(1, 1), 2);
+    }
+
+    #[test]
+    fn grid_position() {
+        let mut grid = Grid::new(3, 3);
+        // for cell in grid.vec_vec_cell_grid.concat(){
+        //     println!("{:#?}", cell);
+        // }
+        print!("{:#?}", grid);
+    }
 }
